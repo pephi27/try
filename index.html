@@ -1866,11 +1866,6 @@ window.addEventListener('load', dashReports);
     <input class="cell" id="empRateInput" min="0" placeholder="Hourly Rate" step="0.01" style="width:140px" type="number"/>
     <input class="cell" id="empBankInput" placeholder="Bank Account" style="width:220px"/>
     <label>
-     Company:
-     <select id="empCompanySelect">
-     </select>
-    </label>
-    <label>
      Schedule:
      <select id="empScheduleSelect">
      </select>
@@ -1896,7 +1891,7 @@ window.addEventListener('load', dashReports);
      Download Employees CSV
     </button>
     <div class="muted">
-     Cols: A = ID, B = Name, C = Hourly Rate (optional), D = Company (optional), E = Schedule Name (optional), F = Project Name (optional), G = Bank Account (optional). Older files without Company still import (defaulting to the first option).
+     Cols: A = ID, B = Name, C = Hourly Rate (optional), D = Schedule Name (optional), E = Project Name (optional), F = Bank Account (optional). Imported employees get default schedule and no project unless set.
     </div>
    </div>
 
@@ -1919,7 +1914,7 @@ window.addEventListener('load', dashReports);
       <th>
        Project
       </th>
-      <th>Company</th><th>Bank Account</th><th>Pag-IBIG</th><th>PhilHealth</th><th>SSS</th><th>Action</th>
+      <th>Bank Account</th><th>Pag-IBIG</th><th>PhilHealth</th><th>SSS</th><th>Action</th>
      </tr>
     </thead>
     <tbody>
@@ -1933,11 +1928,6 @@ window.addEventListener('load', dashReports);
    </h3>
    <div class="controls">
     <input class="cell" id="projectNameInput" placeholder="Project Name" style="width:220px"/>
-    <label>
-     Company:
-     <select id="projectCompanySelect">
-     </select>
-    </label>
     <button id="addProjectBtn">
      Add
     </button>
@@ -1948,11 +1938,8 @@ window.addEventListener('load', dashReports);
    <table id="projectsTable">
     <thead>
      <tr>
-     <th>
-      Project Name
-     </th>
       <th>
-       Company
+       Project Name
       </th>
       <th>
        Action
@@ -5144,18 +5131,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const f2  = n => { const x = Number(n)||0; return x===0 ? '-' : x.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2}); };
     const showMsg = (t)=>{ const m=$('#r_msg'); if(m){ m.textContent=t; m.style.display=t?'block':'none'; } };
 
-    const NO_PROJECT_LABEL = '(No project)';
-    const normalizeProjectName = (p)=>{
-      const raw = (p == null) ? '' : String(p).trim();
-      if (!raw) return NO_PROJECT_LABEL;
-      const lower = raw.toLowerCase();
-      if (lower === NO_PROJECT_LABEL.toLowerCase()) return NO_PROJECT_LABEL;
-      if (['(none)','none','-','null','undefined',''].includes(lower)) return NO_PROJECT_LABEL;
-      return raw;
-    };
     const isRealProject = (p)=>{
-      const label = normalizeProjectName(p);
-      return !!label && String(label).trim().length > 0;
+      if (!p) return false;
+      const s = String(p).trim().toLowerCase();
+      return s && !['(none)','none','-','null','undefined',''].includes(s);
     };
 
     function cssEscape(val){ return String(val).replace(/["\\\\]/g, '\\\\$&'); }
@@ -5257,12 +5236,12 @@ document.addEventListener('DOMContentLoaded', () => {
       trs.forEach(tr=>{
         const id   = (tr.cells[0]?.textContent||'').trim();
         const name = (tr.cells[1]?.textContent||'').trim();
-        const proj = normalizeProjectName(readProjectFromRow(tr));
+        const proj = readProjectFromRow(tr);
         const date = (tr.cells[4]?.textContent||'').trim();
         const rwh = toNum(tr.cells[11]?.textContent) || toNum(tr.querySelector('.regHrs')?.value);
         const oth = toNum(tr.cells[12]?.textContent) || toNum(tr.querySelector('.otHrs')?.value);
         if(!id || !date) return;
-        if(!proj) return;
+        if(!isRealProject(proj)) return;
 
         const d = new Date(date).setHours(0,0,0,0);
         if(fromStr){ const f = new Date(fromStr).setHours(0,0,0,0); if(d < f) return; }
@@ -5278,29 +5257,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function buildTable(){
-      const table = $('#r_table'); if(!table) return;
-
-      let allowByProjName = {};
-      try {
-        const bp = (typeof bantayProj !== 'undefined' && bantayProj) || {};
-        const b  = (typeof bantay !== 'undefined' && bantay) || {};
-        const sp = (typeof storedProjects !== 'undefined' && storedProjects) || {};
-        const map = {};
-        Object.keys(b).forEach(empId => {
-          const amt = parseFloat((b[empId]) || 0) || 0;
-          if (amt <= 0) return;
-          const assigned = bp[empId];
-          const projName = (sp[assigned] && sp[assigned].name) ? sp[assigned].name : assigned;
-          const normalizedProj = normalizeProjectName(projName);
-          if (!normalizedProj) return;
-          map[normalizedProj] = (map[normalizedProj] || 0) + amt;
-        });
-        allowByProjName = map;
-      } catch (e) { allowByProjName = {}; }
-
       const dtrRows = $$('#resultsTable tbody tr');
-      const hasAllowances = Object.keys(allowByProjName).length > 0;
-      if (dtrRows.length === 0 && !hasAllowances){
+      const table = $('#r_table'); if(!table) return;
+      if (dtrRows.length === 0){
         showMsg('No DTR rows found. Import DTR or open a period first.');
         table.innerHTML='';
         __report = null;
@@ -5313,6 +5272,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = collect(from, to) || {};
       // Ensure projects that only have Bantay allowance (no DTR rows) appear as their own blocks
       try {
+        const bp = (typeof bantayProj !== 'undefined' && bantayProj) || {};
+        const b  = (typeof bantay !== 'undefined' && bantay) || {};
+        const sp = (typeof storedProjects !== 'undefined' && storedProjects) || {};
+        const allowByProjName = {};
+        Object.keys(b).forEach(empId => {
+          const amt = parseFloat((b[empId]) || 0) || 0;
+          if (amt <= 0) return;
+          const assigned = bp[empId];
+          if (!assigned) return;
+          const projName = (sp[assigned] && sp[assigned].name) ? sp[assigned].name : assigned;
+          if (!isRealProject(projName)) return;
+          allowByProjName[projName] = (allowByProjName[projName] || 0) + amt;
+        });
         Object.keys(allowByProjName).forEach(pn => { if (!data[pn]) data[pn] = {}; });
       } catch (e) { /* ignore */ }
       __report = { data, from, to, dates };
@@ -5377,32 +5349,30 @@ document.addEventListener('DOMContentLoaded', () => {
           </tr>`;
         });
 
-        // Compute per-project Bantay allowance (Supabase-backed)
-        const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
-          const assigned = (bantayProj || {})[empId];
-          const rawName = (storedProjects && storedProjects[assigned]?.name)
-            ? storedProjects[assigned].name
-            : assigned;
-          const normalizedAssigned = normalizeProjectName(rawName);
-          if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
-          return sum + (parseFloat(bantay[empId]) || 0);
-        }, 0);
+// Compute per-project Bantay allowance (Supabase-backed)
+const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
+  const assigned = (bantayProj || {})[empId];
+  if (!assigned) return sum;
+  const matchesById   = (assigned === proj);
+  const matchesByName = ((storedProjects && storedProjects[assigned]?.name) === proj);
+  return (matchesById || matchesByName) ? sum + (parseFloat(bantay[empId]) || 0) : sum;
+}, 0);
 
-        // Render Allowance row (amount in Gross column)
-        rows += `<tr class="allowance">
-          <td class="left">Allowance</td>
-          <td class="num">-</td>
-          ${dates.map(()=>`<td class="num">-</td><td class="num">-</td>`).join('')}
-          <td class="num">-</td>
-          <td class="num">-</td>
-          <td class="num">-</td>
-          <td class="num">${f2(allow)}</td>
-        </tr>`;
+// Render Allowance row (amount in Gross column)
+rows += `<tr class="allowance">
+  <td class="left">Allowance</td>
+  <td class="num">-</td>
+  ${dates.map(()=>`<td class="num">-</td><td class="num">-</td>`).join('')}
+  <td class="num">-</td>
+  <td class="num">-</td>
+  <td class="num">-</td>
+  <td class="num">${f2(allow)}</td>
+</tr>`;
 
-        // Include allowance in project gross
-        pGross += allow;
+  // Include allowance in project gross
+  pGross += allow;
 
-        rows += `<tr class="totals">
+  rows += `<tr class="totals">
             <td class="left">Project Total</td>
             <td class="num">-</td>
             ${dayTotals.map(dt => `<td class="num">${f2(dt.rwh)}</td><td class="num">${f2(dt.oth)}</td>`).join('')}
@@ -5504,13 +5474,11 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
             const assigned = (bantayProj || {})[empId];
-            const rawName = (typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name)
-              ? storedProjects[assigned].name
-              : assigned;
-            const normalizedAssigned = normalizeProjectName(rawName);
-            if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
+            if (!assigned) return sum;
+            const matchesById   = (assigned === proj);
+            const matchesByName = ((typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name) === proj);
             const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
-            return sum + amt;
+            return (matchesById || matchesByName) ? (sum + amt) : sum;
           }, 0);
           // Push a CSV row for Allowance with zero hours and gross = allowance
           const zeroCells = new Array(dates.length*2).fill('0.00');
@@ -5592,13 +5560,11 @@ document.addEventListener('DOMContentLoaded', () => {
           try{
             const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
               const assigned = (bantayProj || {})[empId];
-              const rawName = (typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name)
-                ? storedProjects[assigned].name
-                : assigned;
-              const normalizedAssigned = normalizeProjectName(rawName);
-              if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
+              if (!assigned) return sum;
+              const matchesById   = (assigned === proj);
+              const matchesByName = ((typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name) === proj);
               const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
-              return sum + amt;
+              return (matchesById || matchesByName) ? (sum + amt) : sum;
             }, 0);
             if (allow && allow > 0){
               const zeros = new Array(dates.length*2).fill('0.00');
@@ -5721,22 +5687,8 @@ document.addEventListener('DOMContentLoaded', () => {
               });
               // Allowance row
               try{
-                const allow = Object.keys(bantay||{}).reduce((sum, empId)=>{
-                  const assigned = (bantayProj||{})[empId];
-                  const rawName = (typeof storedProjects!=='undefined' && storedProjects && storedProjects[assigned]?.name)
-                    ? storedProjects[assigned].name
-                    : assigned;
-                  const normalizedAssigned = normalizeProjectName(rawName);
-                  if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
-                  const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
-                  return sum + amt;
-                },0);
-                if(allow>0){
-                  const zeros=new Array(dates.length*2).fill('0.00');
-                  rows.push(['Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)]));
-                  summaryRows.push([proj,'Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)]));
-                  pGross+=allow;
-                }
+                const allow = Object.keys(bantay||{}).reduce((sum, empId)=>{ const assigned=(bantayProj||{})[empId]; if(!assigned) return sum; const matchesById=(assigned===proj); const matchesByName=((typeof storedProjects!=='undefined'&&storedProjects&&storedProjects[assigned]?.name)===proj); const amt=parseFloat((bantay&&bantay[empId])||0)||0; return (matchesById||matchesByName)?(sum+amt):sum; },0);
+                if(allow>0){ const zeros=new Array(dates.length*2).fill('0.00'); rows.push(['Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)])); summaryRows.push([proj,'Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)])); pGross+=allow; }
               }catch(e){}
               gReg+=pReg; gOT+=pOT; gGross+=pGross;
               dayTotals.forEach((dt,i)=>{ gDayTotals[i].rwh += dt.rwh; gDayTotals[i].oth += dt.oth; });
@@ -5883,19 +5835,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Compute contribution totals across employees for the active period
   function computeContributionTotals(){
     try{ if (typeof syncPeriodScopedData==='function') syncPeriodScopedData(); }catch(e){}
-    const hasCompanyOptions = (typeof COMPANY_OPTIONS !== 'undefined') && Array.isArray(COMPANY_OPTIONS);
-    const defaults = hasCompanyOptions
-      ? COMPANY_OPTIONS.filter(name => typeof name === 'string' && name.trim().length)
-      : ['Edifice','Portafolio'];
-    const makeBucket = () => ({ piEE:0, piER:0, phEE:0, phER:0, sssEE:0, sssER:0, loanSSS:0, loanPI:0 });
-    const sums = {};
-    const ensureBucket = (companyName) => {
-      const label = (typeof companyName === 'string' && companyName.trim().length) ? companyName.trim() : 'Unassigned';
-      if (!sums[label]) sums[label] = makeBucket();
-      return sums[label];
-    };
-    const seeds = defaults.length ? defaults : ['Edifice','Portafolio'];
-    seeds.forEach(name => ensureBucket(name));
+    const sums = { piEE:0, piER:0, phEE:0, phER:0, sssEE:0, sssER:0, loanSSS:0, loanPI:0 };
     try{
       const list = (typeof employeeList!=='undefined' && employeeList) ? employeeList : [];
       const rates = (typeof payrollRates!=='undefined' && payrollRates) ? payrollRates : {};
@@ -5907,7 +5847,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const lPI  = (typeof loanPI!=='undefined'  && loanPI ) ? loanPI  : {};
       list.forEach(emp=>{
         const id = emp.id;
-        const bucket = ensureBucket(se?.[id]?.company);
         const rH = num(rHours[id]);
         const rate = num(se?.[id]?.hourlyRate ?? rates?.[id]);
         const regPay = +(rH * rate).toFixed(2);
@@ -5919,11 +5858,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const pi = (flags.pagibig===false) ? 0 : +(regPay * piRate).toFixed(2);
         const ph = (flags.philhealth===false) ? 0 : +(regPay * phRate).toFixed(2);
         const sss = (flags.sss===false) ? 0 : +(sssFull/div).toFixed(2);
-        bucket.piEE += pi; bucket.piER += pi;
-        bucket.phEE += ph; bucket.phER += ph;
-        bucket.sssEE += sss; bucket.sssER += sss;
-        bucket.loanSSS += +(num(lSSS[id]) / div).toFixed(2);
-        bucket.loanPI  += +(num(lPI[id])  / div).toFixed(2);
+        sums.piEE += pi; sums.piER += pi;
+        sums.phEE += ph; sums.phER += ph;
+        sums.sssEE += sss; sums.sssER += sss;
+        sums.loanSSS += +(num(lSSS[id]) / div).toFixed(2);
+        sums.loanPI  += +(num(lPI[id])  / div).toFixed(2);
       });
     }catch(e){}
     return sums;
@@ -5964,13 +5903,13 @@ document.addEventListener('DOMContentLoaded', () => {
       trs.forEach(tr=>{
         const id = (tr.cells[0]?.textContent||'').trim();
         const name = (tr.cells[1]?.textContent||'').trim();
-        let projRaw = '';
+        let proj = '';
         try{
           const sel = tr.cells[2]?.querySelector('select');
-          if (sel){ const opt = sel.options[sel.selectedIndex]; projRaw = (opt && (opt.textContent||opt.label)) || sel.value || ''; }
-          else { projRaw = (tr.cells[2]?.dataset?.project) || (tr.cells[2]?.textContent||''); }
-        }catch(_){ projRaw = (tr.cells[2]?.textContent||''); }
-        const proj = normalizeProjectName(projRaw);
+          if (sel){ const opt = sel.options[sel.selectedIndex]; proj = (opt && (opt.textContent||opt.label)) || sel.value || ''; }
+          else { proj = (tr.cells[2]?.dataset?.project) || (tr.cells[2]?.textContent||''); }
+        }catch(_){ proj = (tr.cells[2]?.textContent||''); }
+        proj = String(proj||'').trim();
         const rwh = num(tr.cells[11]?.textContent) || num(tr.querySelector('.regHrs')?.value);
         const oth = num(tr.cells[12]?.textContent) || num(tr.querySelector('.otHrs')?.value);
         if (!proj) return;
@@ -5991,13 +5930,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         try{
           const allow = Object.keys((window.bantay||{})).reduce((sum, empId)=>{
-            const assigned = (window.bantayProj||{})[empId];
+            const assigned = (window.bantayProj||{})[empId]; if(!assigned) return sum;
             const sp = (typeof storedProjects!=='undefined' && storedProjects) ? storedProjects : {};
-            const rawName = (sp[assigned]?.name != null) ? sp[assigned].name : assigned;
-            const normalizedAssigned = normalizeProjectName(rawName);
-            if (!normalizedAssigned || normalizedAssigned !== p) return sum;
+            const matchesById = (assigned === p);
+            const matchesByName = (sp[assigned]?.name === p);
             const amt = num((window.bantay||{})[empId]);
-            return sum + amt;
+            return (matchesById || matchesByName) ? (sum + amt) : sum;
           }, 0);
           gross += allow;
         }catch(_){ }
@@ -6016,40 +5954,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderMasterReport(){
     const host = document.getElementById('masterReportContainer'); if(!host) return;
-    const totalsByCompany = computeContributionTotals();
+    const sums = computeContributionTotals();
     const prows = computeProjectTotals();
     const g = prows.reduce((acc,r)=>{ acc.h += r.hrs; acc.t += r.total; return acc; }, {h:0,t:0});
     let html = '';
     html += '<h2>PAYROLL REPORT</h2>';
-    const makeBucket = () => ({ piEE:0, piER:0, phEE:0, phER:0, sssEE:0, sssER:0, loanSSS:0, loanPI:0 });
-    const hasCompanyOptions = (typeof COMPANY_OPTIONS !== 'undefined') && Array.isArray(COMPANY_OPTIONS);
-    const defaults = hasCompanyOptions
-      ? COMPANY_OPTIONS.filter(name => typeof name === 'string' && name.trim().length)
-      : ['Edifice','Portafolio'];
-    const seen = new Set();
-    const orderedCompanies = [];
-    const pushCompany = (name) => {
-      const label = (typeof name === 'string' && name.trim().length) ? name.trim() : 'Unassigned';
-      if (seen.has(label)) return;
-      seen.add(label);
-      orderedCompanies.push(label);
-    };
-    (defaults.length ? defaults : ['Edifice','Portafolio']).forEach(pushCompany);
-    Object.keys(totalsByCompany || {}).forEach(pushCompany);
-    if (!orderedCompanies.length) pushCompany('Unassigned');
-    orderedCompanies.forEach(companyName => {
-      const bucket = (totalsByCompany && totalsByCompany[companyName]) ? totalsByCompany[companyName] : makeBucket();
-      const label = companyName || 'Unassigned';
-      html += '<div class="mr-section">';
-      html += `<h4>SITE PAYROLL - ${safe(label)}</h4>`;
-      html += '<table class="mr-table"><thead>'+
-              '<tr><th colspan="2">PAG-IBIG</th><th colspan="2">PHILHEALTH</th><th colspan="2">SSS</th><th rowspan="2">SSS LOAN</th><th rowspan="2">PAG-IBIG LOAN</th></tr>'+
-              '<tr><th>EE</th><th>ER</th><th>EE</th><th>ER</th><th>EE</th><th>ER</th></tr>'+
-              '</thead><tbody>'+
-              `<tr><td>${f2(bucket.piEE)}</td><td>${f2(bucket.piER)}</td><td>${f2(bucket.phEE)}</td><td>${f2(bucket.phER)}</td><td>${f2(bucket.sssEE)}</td><td>${f2(bucket.sssER)}</td><td>${f2(bucket.loanSSS)}</td><td>${f2(bucket.loanPI)}</td></tr>`+
-              '</tbody></table>';
-      html += '</div>';
-    });
+    html += '<div class="mr-section">';
+    html += '<h4>SITE PAYROLL</h4>';
+    html += '<table class="mr-table"><thead>'+
+            '<tr><th colspan="2">PAG-IBIG</th><th colspan="2">PHILHEALTH</th><th colspan="2">SSS</th><th rowspan="2">SSS LOAN</th><th rowspan="2">PAG-IBIG LOAN</th></tr>'+
+            '<tr><th>EE</th><th>ER</th><th>EE</th><th>ER</th><th>EE</th><th>ER</th></tr>'+
+            '</thead><tbody>'+
+            `<tr><td>${f2(sums.piEE)}</td><td>${f2(sums.piER)}</td><td>${f2(sums.phEE)}</td><td>${f2(sums.phER)}</td><td>${f2(sums.sssEE)}</td><td>${f2(sums.sssER)}</td><td>${f2(sums.loanSSS)}</td><td>${f2(sums.loanPI)}</td></tr>`+
+            '</tbody></table>';
+    html += '</div>';
 
     html += '<div class="mr-section" style="margin-top:16px;">';
     html += '<h4>PROJECT</h4>';
@@ -6148,7 +6066,6 @@ const LS_FILTER_PROJECT = 'att_filter_project_v1';
 const LS_OVERRIDES_SCHEDULES = 'att_overrides_schedules';
 const LS_OVERRIDES_PROJECTS = 'att_overrides_projects';
 const SPLIT_OVERRIDES_TABLE = 'split_overrides';
-const COMPANY_OPTIONS = ['Edifice', 'Portafolio'];
 
 let overridesSchedules = JSON.parse(localStorage.getItem(LS_OVERRIDES_SCHEDULES) || '{}');
 let overridesProjects = JSON.parse(localStorage.getItem(LS_OVERRIDES_PROJECTS) || '{}');
@@ -6365,7 +6282,7 @@ let storedSchedules = JSON.parse(localStorage.getItem(LS_SCHEDULES) || 'null');
 let defaultScheduleId = localStorage.getItem(LS_SCHEDULES_DEFAULT) || null;
 let storedProjects = JSON.parse(localStorage.getItem(LS_PROJECTS) || '{}');
 document.getElementById('downloadEmployeesCSV').addEventListener('click', () => {
-  const header = ['ID','Name','Hourly Rate','Company','Bank Account','Schedule Name','Schedule ID','Project Name','Project ID','Deduct Pag-IBIG','Deduct PhilHealth','Deduct SSS'];
+  const header = ['ID','Name','Hourly Rate','Bank Account','Schedule Name','Schedule ID','Project Name','Project ID','Deduct Pag-IBIG','Deduct PhilHealth','Deduct SSS'];
   const rows = [header];
   Object.keys(storedEmployees).forEach(id => {
     const emp = storedEmployees[id] || {};
@@ -6374,12 +6291,11 @@ document.getElementById('downloadEmployeesCSV').addEventListener('click', () => 
     const projId = emp.projectId || '';
     const projName = (storedProjects && storedProjects[projId]?.name) || '';
     const bank = emp.bankAccount || '';
-    const company = emp.company || COMPANY_OPTIONS[0] || '';
     const flags = (typeof contribFlags !== 'undefined' && contribFlags[id]) || {};
     const fPI = (flags.pagibig !== false) ? 'Yes' : 'No';
     const fPH = (flags.philhealth !== false) ? 'Yes' : 'No';
     const fSSS = (flags.sss !== false) ? 'Yes' : 'No';
-    rows.push([id, emp.name || '', emp.hourlyRate || '', company, bank, schedName, schedId, projName, projId, fPI, fPH, fSSS]);
+    rows.push([id, emp.name || '', emp.hourlyRate || '', bank, schedName, schedId, projName, projId, fPI, fPH, fSSS]);
   });
 
   const csv = rows.map(r => r.map(v => {
@@ -6663,37 +6579,15 @@ function renderEmpScheduleDropdownsInTable(){
   });
 }
 
-function saveProjectsToLS(options = {}){
-  localStorage.setItem(LS_PROJECTS, JSON.stringify(storedProjects));
-  if(!(options && options.skipRender)){
-    renderProjects();
-  }
-  renderProjectDropdowns();
-  renderProjectFilterOptions();
-  renderResults();
-}
+function saveProjectsToLS(){ localStorage.setItem(LS_PROJECTS, JSON.stringify(storedProjects)); renderProjects(); renderProjectDropdowns(); renderProjectFilterOptions(); renderResults(); }
 function renderProjects(){
   const tbody = document.querySelector('#projectsTable tbody'); tbody.innerHTML = '';
-  const projectCompanySel = document.getElementById('projectCompanySelect');
-  const prevCompany = projectCompanySel ? projectCompanySel.value : '';
-  populateCompanySelect(projectCompanySel, prevCompany);
-  let needsSave = false;
   Object.keys(storedProjects).forEach(pid=>{
-    const project = storedProjects[pid];
-    let company = project.company;
-    if (!COMPANY_OPTIONS.includes(company)) {
-      company = COMPANY_OPTIONS[0] || '';
-      project.company = company;
-      needsSave = true;
-    }
-    const companyOptionsHtml = buildCompanyOptionsHtml(company);
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input class="cell proj-name-input" data-id="${pid}" value="${project.name}"></td>
-      <td><select class="proj-company-select" data-id="${pid}">${companyOptionsHtml}</select></td>
+    tr.innerHTML = `<td><input class="cell proj-name-input" data-id="${pid}" value="${storedProjects[pid].name}"></td>
       <td><button class="del-proj" data-id="${pid}">Delete</button></td>`;
     tbody.appendChild(tr);
   });
-  if (needsSave) saveProjectsToLS({ skipRender: true });
   document.querySelectorAll('.del-proj').forEach(btn=>{
     btn.addEventListener('click', e=>{
       const id = e.target.dataset.id;
@@ -6708,19 +6602,6 @@ function renderProjects(){
     inp.addEventListener('change', e => {
       const id = e.target.dataset.id;
       storedProjects[id].name = e.target.value;
-      saveProjectsToLS();
-    });
-  });
-  document.querySelectorAll('.proj-company-select').forEach(sel => {
-    sel.addEventListener('change', e => {
-      const id = e.target.dataset.id;
-      if (!storedProjects[id]) return;
-      let value = e.target.value;
-      if (!COMPANY_OPTIONS.includes(value)) {
-        value = COMPANY_OPTIONS[0] || '';
-        e.target.value = value;
-      }
-      storedProjects[id].company = value;
       saveProjectsToLS();
     });
   });
@@ -6771,49 +6652,17 @@ filterProjectSel && filterProjectSel.addEventListener('change', ()=>{
   renderResults();
 });
 
-function buildCompanyOptionsHtml(selectedValue){
-  const value = (selectedValue && COMPANY_OPTIONS.includes(selectedValue))
-    ? selectedValue
-    : (COMPANY_OPTIONS[0] || '');
-  return COMPANY_OPTIONS.map(option =>
-    `<option value="${option}" ${option === value ? 'selected' : ''}>${option}</option>`
-  ).join('');
-}
-
-function populateCompanySelect(selectEl, selectedValue){
-  if (!selectEl) return;
-  const value = (selectedValue && COMPANY_OPTIONS.includes(selectedValue))
-    ? selectedValue
-    : (COMPANY_OPTIONS[0] || '');
-  selectEl.innerHTML = buildCompanyOptionsHtml(value);
-  if (value || value === '') {
-    selectEl.value = value;
-  }
-}
-
 function renderEmployees(){
   renderEmpScheduleDropdowns();
   renderProjectDropdowns();
-  const empCompanySel = document.getElementById('empCompanySelect');
-  const prevCompany = empCompanySel ? empCompanySel.value : '';
-  populateCompanySelect(empCompanySel, prevCompany);
   const tbody = document.querySelector('#employeesTable tbody'); tbody.innerHTML = '';
   const ids = Object.keys(storedEmployees).sort((a,b)=>{
     const na = /^\d+$/.test(a), nb = /^\d+$/.test(b);
     if (na && nb) return Number(a) - Number(b);
     return String(a).localeCompare(String(b));
   });
-  let needsSave = false;
-  ids.forEach(id => {
+ids.forEach(id => {
     const emp = storedEmployees[id];
-    let company = emp.company;
-    if (!COMPANY_OPTIONS.includes(company)) {
-      company = COMPANY_OPTIONS[0] || '';
-      if (company !== undefined) {
-        emp.company = company;
-        needsSave = true;
-      }
-    }
     let scheduleOptionsHtml = '';
     Object.keys(storedSchedules).forEach(sid=>{
       const label = storedSchedules[sid].name + (sid===defaultScheduleId ? ' (Default)' : '');
@@ -6823,14 +6672,12 @@ function renderEmployees(){
     Object.keys(storedProjects).forEach(pid=>{
       projectOptionsHtml += `<option value="${pid}" ${emp.projectId===pid ? 'selected' : ''}>${storedProjects[pid].name}</option>`;
     });
-    const companyOptionsHtml = buildCompanyOptionsHtml(company);
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${id}</td>
       <td><input class="cell emp-name-input" data-id="${id}" value="${emp.name}"></td>
       <td><input class="cell emp-rate-input" type="number" step="0.01" min="0" data-id="${id}" value="${emp.hourlyRate != null ? emp.hourlyRate : ''}" disabled></td>
       <td><select class="emp-sel-schedule" data-id="${id}">${scheduleOptionsHtml}</select></td>
       <td><select class="emp-sel-project" data-id="${id}">${projectOptionsHtml}</select></td>
-      <td><select class="emp-company-select" data-id="${id}">${companyOptionsHtml}</select></td>
       <td><input class="cell emp-bank-input" data-id="${id}" value="${emp.bankAccount != null ? emp.bankAccount : ''}"></td>
       <td><input type="checkbox" class="emp-pagibig" data-id="${id}" ${ (contribFlags[id] && contribFlags[id].pagibig === false) ? '' : 'checked'}></td>
       <td><input type="checkbox" class="emp-philhealth" data-id="${id}" ${ (contribFlags[id] && contribFlags[id].philhealth === false) ? '' : 'checked'}></td>
@@ -6867,8 +6714,6 @@ function renderEmployees(){
     }
   });
 
-  if (needsSave) saveEmployeesToLS();
-
   document.querySelectorAll('.emp-name-input').forEach(inp=> inp.addEventListener('change', (e)=>{
     storedEmployees[e.target.dataset.id].name = e.target.value; saveEmployeesToLS(); renderResults();
   }));
@@ -6885,18 +6730,6 @@ document.querySelectorAll('.emp-sel-schedule').forEach(sel=> sel.addEventListene
   document.querySelectorAll('.emp-sel-project').forEach(sel=> sel.addEventListener('change', (e)=>{
     storedEmployees[e.target.dataset.id].projectId = e.target.value || null; saveEmployeesToLS(); renderResults();
   }));
-  document.querySelectorAll('.emp-company-select').forEach(sel=> sel.addEventListener('change', (e)=>{
-    const id = e.target.dataset.id;
-    if (!storedEmployees[id]) return;
-    let value = e.target.value;
-    if (!COMPANY_OPTIONS.includes(value)) {
-      value = COMPANY_OPTIONS[0] || '';
-      e.target.value = value;
-    }
-    storedEmployees[id].company = value;
-    saveEmployeesToLS();
-    renderResults();
-  }));
   document.querySelectorAll('.del-emp').forEach(btn=> btn.addEventListener('click', (e)=>{
     const id=e.target.dataset.id;
     if(confirm(`Delete employee ${id} - ${storedEmployees[id].name}?`)){
@@ -6911,12 +6744,9 @@ document.getElementById('addEmployeeBtn').addEventListener('click', ()=>{
   const rate = parseFloat(document.getElementById('empRateInput').value) || 0;
   const scheduleId = document.getElementById('empScheduleSelect').value || defaultScheduleId;
   const projectId = document.getElementById('empProjectSelect').value || null;
-  const companySelect = document.getElementById('empCompanySelect');
-  let company = companySelect ? companySelect.value : '';
-  if (!COMPANY_OPTIONS.includes(company)) company = COMPANY_OPTIONS[0] || '';
   const bank = document.getElementById('empBankInput').value.trim();
   if(!id){ alert('Enter ID'); return; } if(!name){ alert('Enter Name'); return; }
-  storedEmployees[id] = { name: name, hourlyRate: rate, bankAccount: bank, scheduleId: scheduleId, projectId: projectId, company: company };
+  storedEmployees[id] = { name: name, hourlyRate: rate, bankAccount: bank, scheduleId: scheduleId, projectId: projectId };
   // Initialize default contribution deduction flags for new employee if not already set
   if (!contribFlags[id]) {
     contribFlags[id] = { pagibig: true, philhealth: true, sss: true };
@@ -6924,7 +6754,6 @@ document.getElementById('addEmployeeBtn').addEventListener('click', ()=>{
   }
   saveEmployeesToLS();
   document.getElementById('empIdInput').value=''; document.getElementById('empNameInput').value=''; document.getElementById('empRateInput').value=''; document.getElementById('empBankInput').value='';
-  if (companySelect) companySelect.value = COMPANY_OPTIONS[0] || '';
   renderEmployees(); renderResults();
 });
 document.getElementById('clearEmployeesBtn').addEventListener('click', ()=>{
@@ -6943,82 +6772,23 @@ document.getElementById('empFileInput').addEventListener('change', (evt) => {
       
 const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 let added = 0, updated = 0;
-const headerRow = rows[0] || [];
-const normalizedHeader = headerRow.map(cell => String(cell ?? '').trim().toLowerCase());
-const headerLikely = normalizedHeader.some(val => val === 'id' || val === 'employee id') && normalizedHeader.some(val => val === 'name' || val === 'employee name');
-const dataRows = rows.slice(headerLikely ? 1 : 0);
-const findIndex = (labels) => {
-  for (const label of labels) {
-    const idx = normalizedHeader.indexOf(label);
-    if (idx !== -1) return idx;
-  }
-  return -1;
-};
-const companyHeaderIdx = findIndex(['company']);
-const scheduleHeaderIdx = findIndex(['schedule name','schedule']);
-const projectHeaderIdx = findIndex(['project name','project']);
-const bankHeaderIdx = findIndex(['bank account','bank']);
-const getCell = (row, idx) => (idx >= 0 && idx < row.length) ? row[idx] : '';
-const companyIdxNew = companyHeaderIdx !== -1 ? companyHeaderIdx : 3;
-const scheduleIdxNew = scheduleHeaderIdx !== -1 ? scheduleHeaderIdx : 4;
-const projectIdxNew = projectHeaderIdx !== -1 ? projectHeaderIdx : 5;
-const bankIdxNew = bankHeaderIdx !== -1 ? bankHeaderIdx : 6;
-const scheduleIdxOld = scheduleHeaderIdx !== -1 ? scheduleHeaderIdx : 3;
-const projectIdxOld = projectHeaderIdx !== -1 ? projectHeaderIdx : 4;
-const bankIdxOld = bankHeaderIdx !== -1 ? bankHeaderIdx : 5;
+rows.slice(1).forEach(row => {
+  if (row && row.length >= 2) {
+    const id = String(row[0] ?? '').trim();
+    const name = String(row[1] ?? '').trim();
+    const rate = row.length >= 3 ? parseFloat(row[2]) || 0 : 0;
+    const schedName = row.length >= 4 ? String(row[3] ?? '').trim().toLowerCase() : '';
+    const projName = row.length >= 5 ? String(row[4] ?? '').trim().toLowerCase() : '';
 
-dataRows.forEach(row => {
-  if (!row || row.length < 2) return;
-  const id = String(row[0] ?? '').trim();
-  const name = String(row[1] ?? '').trim();
-  const rate = row.length >= 3 ? parseFloat(row[2]) || 0 : 0;
-  if (!id || !name) return;
+    const bank = row.length >= 6 ? String(row[5] ?? '').trim() : '';
+    if (id && name) {
+      if (!storedEmployees[id]) { added++; } else { updated++; }
+      let scheduleId = Object.keys(storedSchedules).find(k => storedSchedules[k].name.toLowerCase() === schedName) || defaultScheduleId;
+      let projectId = Object.keys(storedProjects).find(k => storedProjects[k].name.toLowerCase() === projName) || null;
 
-  const newCompanyCandidate = String(getCell(row, companyIdxNew) ?? '').trim();
-  const newScheduleCandidate = String(getCell(row, scheduleIdxNew) ?? '').trim();
-  const newProjectCandidate = String(getCell(row, projectIdxNew) ?? '').trim();
-  const newBankCandidate = String(getCell(row, bankIdxNew) ?? '').trim();
-
-  const oldScheduleCandidateRaw = String(getCell(row, scheduleIdxOld) ?? '').trim();
-  const oldProjectCandidateRaw = String(getCell(row, projectIdxOld) ?? '').trim();
-  const oldBankCandidate = String(getCell(row, bankIdxOld) ?? '').trim();
-
-  let useNewFormat = companyHeaderIdx !== -1;
-  if (!useNewFormat) {
-    if (COMPANY_OPTIONS.includes(newCompanyCandidate)) {
-      useNewFormat = true;
-    } else if (newCompanyCandidate && !oldScheduleCandidateRaw && newScheduleCandidate) {
-      useNewFormat = true;
-    } else if (!oldScheduleCandidateRaw && oldProjectCandidateRaw && newScheduleCandidate && oldProjectCandidateRaw === newScheduleCandidate) {
-      useNewFormat = true;
-    } else if (!oldScheduleCandidateRaw && oldBankCandidate && newProjectCandidate && oldBankCandidate === newProjectCandidate) {
-      useNewFormat = true;
-    } else if (!oldScheduleCandidateRaw && !oldProjectCandidateRaw && (newScheduleCandidate || newProjectCandidate)) {
-      useNewFormat = true;
-    } else if (row.length >= 7) {
-      useNewFormat = true;
+      storedEmployees[id] = { name: name, hourlyRate: rate, bankAccount: bank, scheduleId: scheduleId, projectId: projectId };
     }
   }
-
-  let company = useNewFormat ? newCompanyCandidate : '';
-  let scheduleName = (useNewFormat ? newScheduleCandidate : oldScheduleCandidateRaw) || '';
-  let projectName = (useNewFormat ? newProjectCandidate : oldProjectCandidateRaw) || '';
-  let bank = useNewFormat ? newBankCandidate : oldBankCandidate;
-
-  if (!scheduleName && !useNewFormat) scheduleName = newScheduleCandidate || '';
-  if (!projectName && !useNewFormat) projectName = newProjectCandidate || '';
-  if (!bank && useNewFormat) bank = oldBankCandidate;
-  if (!bank && !useNewFormat) bank = newBankCandidate;
-
-  scheduleName = scheduleName.toLowerCase();
-  projectName = projectName.toLowerCase();
-  if (!COMPANY_OPTIONS.includes(company)) company = COMPANY_OPTIONS[0] || '';
-
-  if (!storedEmployees[id]) { added++; } else { updated++; }
-  let scheduleId = Object.keys(storedSchedules).find(k => (storedSchedules[k].name || '').toLowerCase() === scheduleName) || defaultScheduleId;
-  let projectId = Object.keys(storedProjects).find(k => (storedProjects[k].name || '').toLowerCase() === projectName) || null;
-
-  storedEmployees[id] = { name: name, hourlyRate: rate, bankAccount: bank, scheduleId: scheduleId, projectId: projectId, company: company };
 });
 saveEmployeesToLS();
 renderEmployees();
@@ -7821,12 +7591,8 @@ document.getElementById('addProjectBtn').addEventListener('click', ()=>{
   const name = document.getElementById('projectNameInput').value.trim();
   if(!name) return alert('Enter project name');
   const id = 'proj_' + Date.now();
-  const companySelect = document.getElementById('projectCompanySelect');
-  let company = companySelect ? companySelect.value : '';
-  if (!COMPANY_OPTIONS.includes(company)) company = COMPANY_OPTIONS[0] || '';
-  storedProjects[id] = { name, company };
+  storedProjects[id] = { name };
   document.getElementById('projectNameInput').value='';
-  if (companySelect) companySelect.value = COMPANY_OPTIONS[0] || '';
   saveProjectsToLS();
 });
 document.getElementById('clearProjectsBtn').addEventListener('click', ()=>{
@@ -7854,7 +7620,7 @@ document.addEventListener('DOMContentLoaded', function () {
   const dlBtn = document.getElementById('downloadEmployeesCSV');
   if (dlBtn) {
     dlBtn.addEventListener('click', () => {
-      const header = ['ID','Name','Hourly Rate','Company','Bank Account','Schedule Name','Schedule ID','Project Name','Project ID','Deduct Pag-IBIG','Deduct PhilHealth','Deduct SSS'];
+      const header = ['ID','Name','Hourly Rate','Bank Account','Schedule Name','Schedule ID','Project Name','Project ID','Deduct Pag-IBIG','Deduct PhilHealth','Deduct SSS'];
       const rows = [header];
       Object.keys(storedEmployees).forEach(id => {
         const emp = storedEmployees[id] || {};
@@ -7863,12 +7629,11 @@ document.addEventListener('DOMContentLoaded', function () {
         const projId = emp.projectId || '';
         const projName = (storedProjects && storedProjects[projId]?.name) || '';
         const bank = emp.bankAccount || '';
-        const company = emp.company || COMPANY_OPTIONS[0] || '';
         const flags = (typeof contribFlags !== 'undefined' && contribFlags[id]) || {};
         const fPI = (flags.pagibig !== false) ? 'Yes' : 'No';
         const fPH = (flags.philhealth !== false) ? 'Yes' : 'No';
         const fSSS = (flags.sss !== false) ? 'Yes' : 'No';
-        rows.push([id, emp.name || '', emp.hourlyRate || '', company, bank, schedName, schedId, projName, projId, fPI, fPH, fSSS]);
+        rows.push([id, emp.name || '', emp.hourlyRate || '', bank, schedName, schedId, projName, projId, fPI, fPH, fSSS]);
       });
       const csv = rows.map(r => r.map(v => {
         const s = String(v ?? '');
