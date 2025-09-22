@@ -5144,10 +5144,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const f2  = n => { const x = Number(n)||0; return x===0 ? '-' : x.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2}); };
     const showMsg = (t)=>{ const m=$('#r_msg'); if(m){ m.textContent=t; m.style.display=t?'block':'none'; } };
 
+    const NO_PROJECT_LABEL = '(No project)';
+    const normalizeProjectName = (p)=>{
+      const raw = (p == null) ? '' : String(p).trim();
+      if (!raw) return NO_PROJECT_LABEL;
+      const lower = raw.toLowerCase();
+      if (lower === NO_PROJECT_LABEL.toLowerCase()) return NO_PROJECT_LABEL;
+      if (['(none)','none','-','null','undefined',''].includes(lower)) return NO_PROJECT_LABEL;
+      return raw;
+    };
     const isRealProject = (p)=>{
-      if (!p) return false;
-      const s = String(p).trim().toLowerCase();
-      return s && !['(none)','none','-','null','undefined',''].includes(s);
+      const label = normalizeProjectName(p);
+      return !!label && String(label).trim().length > 0;
     };
 
     function cssEscape(val){ return String(val).replace(/["\\\\]/g, '\\\\$&'); }
@@ -5249,12 +5257,12 @@ document.addEventListener('DOMContentLoaded', () => {
       trs.forEach(tr=>{
         const id   = (tr.cells[0]?.textContent||'').trim();
         const name = (tr.cells[1]?.textContent||'').trim();
-        const proj = readProjectFromRow(tr);
+        const proj = normalizeProjectName(readProjectFromRow(tr));
         const date = (tr.cells[4]?.textContent||'').trim();
         const rwh = toNum(tr.cells[11]?.textContent) || toNum(tr.querySelector('.regHrs')?.value);
         const oth = toNum(tr.cells[12]?.textContent) || toNum(tr.querySelector('.otHrs')?.value);
         if(!id || !date) return;
-        if(!isRealProject(proj)) return;
+        if(!proj) return;
 
         const d = new Date(date).setHours(0,0,0,0);
         if(fromStr){ const f = new Date(fromStr).setHours(0,0,0,0); if(d < f) return; }
@@ -5293,10 +5301,10 @@ document.addEventListener('DOMContentLoaded', () => {
           const amt = parseFloat((b[empId]) || 0) || 0;
           if (amt <= 0) return;
           const assigned = bp[empId];
-          if (!assigned) return;
           const projName = (sp[assigned] && sp[assigned].name) ? sp[assigned].name : assigned;
-          if (!isRealProject(projName)) return;
-          allowByProjName[projName] = (allowByProjName[projName] || 0) + amt;
+          const normalizedProj = normalizeProjectName(projName);
+          if (!normalizedProj) return;
+          allowByProjName[normalizedProj] = (allowByProjName[normalizedProj] || 0) + amt;
         });
         Object.keys(allowByProjName).forEach(pn => { if (!data[pn]) data[pn] = {}; });
       } catch (e) { /* ignore */ }
@@ -5362,30 +5370,32 @@ document.addEventListener('DOMContentLoaded', () => {
           </tr>`;
         });
 
-// Compute per-project Bantay allowance (Supabase-backed)
-const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
-  const assigned = (bantayProj || {})[empId];
-  if (!assigned) return sum;
-  const matchesById   = (assigned === proj);
-  const matchesByName = ((storedProjects && storedProjects[assigned]?.name) === proj);
-  return (matchesById || matchesByName) ? sum + (parseFloat(bantay[empId]) || 0) : sum;
-}, 0);
+        // Compute per-project Bantay allowance (Supabase-backed)
+        const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
+          const assigned = (bantayProj || {})[empId];
+          const rawName = (storedProjects && storedProjects[assigned]?.name)
+            ? storedProjects[assigned].name
+            : assigned;
+          const normalizedAssigned = normalizeProjectName(rawName);
+          if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
+          return sum + (parseFloat(bantay[empId]) || 0);
+        }, 0);
 
-// Render Allowance row (amount in Gross column)
-rows += `<tr class="allowance">
-  <td class="left">Allowance</td>
-  <td class="num">-</td>
-  ${dates.map(()=>`<td class="num">-</td><td class="num">-</td>`).join('')}
-  <td class="num">-</td>
-  <td class="num">-</td>
-  <td class="num">-</td>
-  <td class="num">${f2(allow)}</td>
-</tr>`;
+        // Render Allowance row (amount in Gross column)
+        rows += `<tr class="allowance">
+          <td class="left">Allowance</td>
+          <td class="num">-</td>
+          ${dates.map(()=>`<td class="num">-</td><td class="num">-</td>`).join('')}
+          <td class="num">-</td>
+          <td class="num">-</td>
+          <td class="num">-</td>
+          <td class="num">${f2(allow)}</td>
+        </tr>`;
 
-  // Include allowance in project gross
-  pGross += allow;
+        // Include allowance in project gross
+        pGross += allow;
 
-  rows += `<tr class="totals">
+        rows += `<tr class="totals">
             <td class="left">Project Total</td>
             <td class="num">-</td>
             ${dayTotals.map(dt => `<td class="num">${f2(dt.rwh)}</td><td class="num">${f2(dt.oth)}</td>`).join('')}
@@ -5487,11 +5497,13 @@ rows += `<tr class="allowance">
         try {
           const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
             const assigned = (bantayProj || {})[empId];
-            if (!assigned) return sum;
-            const matchesById   = (assigned === proj);
-            const matchesByName = ((typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name) === proj);
+            const rawName = (typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name)
+              ? storedProjects[assigned].name
+              : assigned;
+            const normalizedAssigned = normalizeProjectName(rawName);
+            if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
             const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
-            return (matchesById || matchesByName) ? (sum + amt) : sum;
+            return sum + amt;
           }, 0);
           // Push a CSV row for Allowance with zero hours and gross = allowance
           const zeroCells = new Array(dates.length*2).fill('0.00');
@@ -5573,11 +5585,13 @@ rows += `<tr class="allowance">
           try{
             const allow = Object.keys(bantay || {}).reduce((sum, empId) => {
               const assigned = (bantayProj || {})[empId];
-              if (!assigned) return sum;
-              const matchesById   = (assigned === proj);
-              const matchesByName = ((typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name) === proj);
+              const rawName = (typeof storedProjects !== 'undefined' && storedProjects && storedProjects[assigned]?.name)
+                ? storedProjects[assigned].name
+                : assigned;
+              const normalizedAssigned = normalizeProjectName(rawName);
+              if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
               const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
-              return (matchesById || matchesByName) ? (sum + amt) : sum;
+              return sum + amt;
             }, 0);
             if (allow && allow > 0){
               const zeros = new Array(dates.length*2).fill('0.00');
@@ -5700,8 +5714,22 @@ rows += `<tr class="allowance">
               });
               // Allowance row
               try{
-                const allow = Object.keys(bantay||{}).reduce((sum, empId)=>{ const assigned=(bantayProj||{})[empId]; if(!assigned) return sum; const matchesById=(assigned===proj); const matchesByName=((typeof storedProjects!=='undefined'&&storedProjects&&storedProjects[assigned]?.name)===proj); const amt=parseFloat((bantay&&bantay[empId])||0)||0; return (matchesById||matchesByName)?(sum+amt):sum; },0);
-                if(allow>0){ const zeros=new Array(dates.length*2).fill('0.00'); rows.push(['Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)])); summaryRows.push([proj,'Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)])); pGross+=allow; }
+                const allow = Object.keys(bantay||{}).reduce((sum, empId)=>{
+                  const assigned = (bantayProj||{})[empId];
+                  const rawName = (typeof storedProjects!=='undefined' && storedProjects && storedProjects[assigned]?.name)
+                    ? storedProjects[assigned].name
+                    : assigned;
+                  const normalizedAssigned = normalizeProjectName(rawName);
+                  if (!normalizedAssigned || normalizedAssigned !== proj) return sum;
+                  const amt = parseFloat((bantay && bantay[empId]) || 0) || 0;
+                  return sum + amt;
+                },0);
+                if(allow>0){
+                  const zeros=new Array(dates.length*2).fill('0.00');
+                  rows.push(['Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)]));
+                  summaryRows.push([proj,'Allowance',''].concat(zeros,['0.00','0.00','0.00', to2(allow)]));
+                  pGross+=allow;
+                }
               }catch(e){}
               gReg+=pReg; gOT+=pOT; gGross+=pGross;
               dayTotals.forEach((dt,i)=>{ gDayTotals[i].rwh += dt.rwh; gDayTotals[i].oth += dt.oth; });
@@ -5929,13 +5957,13 @@ rows += `<tr class="allowance">
       trs.forEach(tr=>{
         const id = (tr.cells[0]?.textContent||'').trim();
         const name = (tr.cells[1]?.textContent||'').trim();
-        let proj = '';
+        let projRaw = '';
         try{
           const sel = tr.cells[2]?.querySelector('select');
-          if (sel){ const opt = sel.options[sel.selectedIndex]; proj = (opt && (opt.textContent||opt.label)) || sel.value || ''; }
-          else { proj = (tr.cells[2]?.dataset?.project) || (tr.cells[2]?.textContent||''); }
-        }catch(_){ proj = (tr.cells[2]?.textContent||''); }
-        proj = String(proj||'').trim();
+          if (sel){ const opt = sel.options[sel.selectedIndex]; projRaw = (opt && (opt.textContent||opt.label)) || sel.value || ''; }
+          else { projRaw = (tr.cells[2]?.dataset?.project) || (tr.cells[2]?.textContent||''); }
+        }catch(_){ projRaw = (tr.cells[2]?.textContent||''); }
+        const proj = normalizeProjectName(projRaw);
         const rwh = num(tr.cells[11]?.textContent) || num(tr.querySelector('.regHrs')?.value);
         const oth = num(tr.cells[12]?.textContent) || num(tr.querySelector('.otHrs')?.value);
         if (!proj) return;
@@ -5956,12 +5984,13 @@ rows += `<tr class="allowance">
         });
         try{
           const allow = Object.keys((window.bantay||{})).reduce((sum, empId)=>{
-            const assigned = (window.bantayProj||{})[empId]; if(!assigned) return sum;
+            const assigned = (window.bantayProj||{})[empId];
             const sp = (typeof storedProjects!=='undefined' && storedProjects) ? storedProjects : {};
-            const matchesById = (assigned === p);
-            const matchesByName = (sp[assigned]?.name === p);
+            const rawName = (sp[assigned]?.name != null) ? sp[assigned].name : assigned;
+            const normalizedAssigned = normalizeProjectName(rawName);
+            if (!normalizedAssigned || normalizedAssigned !== p) return sum;
             const amt = num((window.bantay||{})[empId]);
-            return (matchesById || matchesByName) ? (sum + amt) : sum;
+            return sum + amt;
           }, 0);
           gross += allow;
         }catch(_){ }
