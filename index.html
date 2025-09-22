@@ -5278,9 +5278,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function buildTable(){
-      const dtrRows = $$('#resultsTable tbody tr');
       const table = $('#r_table'); if(!table) return;
-      if (dtrRows.length === 0){
+
+      let allowByProjName = {};
+      try {
+        const bp = (typeof bantayProj !== 'undefined' && bantayProj) || {};
+        const b  = (typeof bantay !== 'undefined' && bantay) || {};
+        const sp = (typeof storedProjects !== 'undefined' && storedProjects) || {};
+        const map = {};
+        Object.keys(b).forEach(empId => {
+          const amt = parseFloat((b[empId]) || 0) || 0;
+          if (amt <= 0) return;
+          const assigned = bp[empId];
+          const projName = (sp[assigned] && sp[assigned].name) ? sp[assigned].name : assigned;
+          const normalizedProj = normalizeProjectName(projName);
+          if (!normalizedProj) return;
+          map[normalizedProj] = (map[normalizedProj] || 0) + amt;
+        });
+        allowByProjName = map;
+      } catch (e) { allowByProjName = {}; }
+
+      const dtrRows = $$('#resultsTable tbody tr');
+      const hasAllowances = Object.keys(allowByProjName).length > 0;
+      if (dtrRows.length === 0 && !hasAllowances){
         showMsg('No DTR rows found. Import DTR or open a period first.');
         table.innerHTML='';
         __report = null;
@@ -5293,19 +5313,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = collect(from, to) || {};
       // Ensure projects that only have Bantay allowance (no DTR rows) appear as their own blocks
       try {
-        const bp = (typeof bantayProj !== 'undefined' && bantayProj) || {};
-        const b  = (typeof bantay !== 'undefined' && bantay) || {};
-        const sp = (typeof storedProjects !== 'undefined' && storedProjects) || {};
-        const allowByProjName = {};
-        Object.keys(b).forEach(empId => {
-          const amt = parseFloat((b[empId]) || 0) || 0;
-          if (amt <= 0) return;
-          const assigned = bp[empId];
-          const projName = (sp[assigned] && sp[assigned].name) ? sp[assigned].name : assigned;
-          const normalizedProj = normalizeProjectName(projName);
-          if (!normalizedProj) return;
-          allowByProjName[normalizedProj] = (allowByProjName[normalizedProj] || 0) + amt;
-        });
         Object.keys(allowByProjName).forEach(pn => { if (!data[pn]) data[pn] = {}; });
       } catch (e) { /* ignore */ }
       __report = { data, from, to, dates };
